@@ -9,15 +9,13 @@ import os
 import sys
 import locale
 import threading
-import time
-import random
-import xml.etree.ElementTree as ET
-import re
-import glob
 import json
-import shutil
 import datetime
 import hashlib
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional, Union
+import concurrent.futures
+import weakref
 
 # Complete translation dictionary
 TRANSLATIONS = {
@@ -102,7 +100,11 @@ TRANSLATIONS = {
         "extensions_disabled": "GNOME Shell extensions are disabled",
         "extensions_enable_prompt": "Do you want to enable GNOME Shell extensions to apply this layout? Some layouts require extensions to function properly.",
         "extensions_enabled_success": "GNOME Shell extensions have been enabled. A restart of GNOME Shell may be required for changes to take effect.",
-        "extensions_enable_error": "Error enabling GNOME Shell extensions: {error}"
+        "extensions_enable_error": "Error enabling GNOME Shell extensions: {error}",
+        "close": "Close",
+        "skip": "Skip",
+        "backup": "Backup",
+        "unknown": "Unknown error"
     },
     "es": {
         "app_name": "Community Layout Switcher",
@@ -185,7 +187,11 @@ TRANSLATIONS = {
         "extensions_disabled": "Las extensiones de GNOME Shell están deshabilitadas",
         "extensions_enable_prompt": "¿Quieres habilitar las extensiones de GNOME Shell para aplicar este diseño? Algunos diseños requieren extensiones para funcionar correctamente.",
         "extensions_enabled_success": "Las extensiones de GNOME Shell han sido habilitadas. Es posible que sea necesario reiniciar GNOME Shell para que los cambios surtan efecto.",
-        "extensions_enable_error": "Error al habilitar las extensiones de GNOME Shell: {error}"
+        "extensions_enable_error": "Error al habilitar las extensiones de GNOME Shell: {error}",
+        "close": "Cerrar",
+        "skip": "Omitir",
+        "backup": "Copia de seguridad",
+        "unknown": "Error desconocido"
     },
     "fr": {
         "app_name": "Community Layout Switcher",
@@ -268,7 +274,11 @@ TRANSLATIONS = {
         "extensions_disabled": "Les extensions GNOME Shell sont désactivées",
         "extensions_enable_prompt": "Voulez-vous activer les extensions GNOME Shell pour appliquer cette disposition? Certaines dispositions nécessitent des extensions pour fonctionner correctement.",
         "extensions_enabled_success": "Les extensions GNOME Shell ont été activées. Un redémarrage de GNOME Shell peut être nécessaire pour que les modifications prennent effet.",
-        "extensions_enable_error": "Erreur lors de l'activation des extensions GNOME Shell: {error}"
+        "extensions_enable_error": "Erreur lors de l'activation des extensions GNOME Shell: {error}",
+        "close": "Fermer",
+        "skip": "Ignorer",
+        "backup": "Sauvegarder",
+        "unknown": "Erreur inconnue"
     },
     "de": {
         "app_name": "Community Layout Switcher",
@@ -351,7 +361,11 @@ TRANSLATIONS = {
         "extensions_disabled": "GNOME Shell-Erweiterungen sind deaktiviert",
         "extensions_enable_prompt": "Möchten Sie GNOME Shell-Erweiterungen aktivieren, um dieses Layout anzuwenden? Einige Layouts erfordern Erweiterungen, um ordnungsgemäß zu funktionieren.",
         "extensions_enabled_success": "GNOME Shell-Erweiterungen wurden aktiviert. Ein Neustart von GNOME Shell kann erforderlich sein, damit die Änderungen wirksam werden.",
-        "extensions_enable_error": "Fehler beim Aktivieren der GNOME Shell-Erweiterungen: {error}"
+        "extensions_enable_error": "Fehler beim Aktivieren der GNOME Shell-Erweiterungen: {error}",
+        "close": "Schließen",
+        "skip": "Überspringen",
+        "backup": "Sicherung",
+        "unknown": "Unbekannter Fehler"
     },
     "pt_BR": {
         "app_name": "Community Layout Switcher",
@@ -434,7 +448,11 @@ TRANSLATIONS = {
         "extensions_disabled": "As extensões do GNOME Shell estão desativadas",
         "extensions_enable_prompt": "Você deseja ativar as extensões do GNOME Shell para aplicar este layout? Alguns layouts requerem extensões para funcionar corretamente.",
         "extensions_enabled_success": "As extensões do GNOME Shell foram ativadas. Pode ser necessário reiniciar o GNOME Shell para que as alterações tenham efeito.",
-        "extensions_enable_error": "Erro ao ativar as extensões do GNOME Shell: {error}"
+        "extensions_enable_error": "Erro ao ativar as extensões do GNOME Shell: {error}",
+        "close": "Fechar",
+        "skip": "Pular",
+        "backup": "Backup",
+        "unknown": "Erro desconhecido"
     },
     "pt_PT": {
         "app_name": "Community Layout Switcher",
@@ -517,198 +535,692 @@ TRANSLATIONS = {
         "extensions_disabled": "As extensões do GNOME Shell estão desativadas",
         "extensions_enable_prompt": "Deseja ativar as extensões do GNOME Shell para aplicar este esquema? Alguns esquemas requerem extensões para funcionar corretamente.",
         "extensions_enabled_success": "As extensões do GNOME Shell foram ativadas. Pode ser necessário reiniciar o GNOME Shell para que as alterações tenham efeito.",
-        "extensions_enable_error": "Erro ao ativar as extensões do GNOME Shell: {error}"
+        "extensions_enable_error": "Erro ao ativar as extensões do GNOME Shell: {error}",
+        "close": "Fechar",
+        "skip": "Ignorar",
+        "backup": "Cópia de segurança",
+        "unknown": "Erro desconhecido"
     }
 }
 
-# Get system language
-def get_system_language():
-    try:
-        # Try to get the language from the locale
-        lang = locale.getdefaultlocale()[0]
-        if lang:
-            # Check if we have a translation for the full locale
-            if lang in TRANSLATIONS:
-                return lang
-            # Extract primary language code (e.g., 'pt' from 'pt_BR')
-            primary_lang = lang.split('_')[0]
-            # Check if we have a translation for the primary language
-            if primary_lang in TRANSLATIONS:
-                return primary_lang
-    except:
-        pass
-    
-    # Fallback to checking environment variables
-    try:
-        lang = os.environ.get('LANG', '').split('.')[0]
-        if lang:
-            # Check if we have a translation for the full locale
-            if lang in TRANSLATIONS:
-                return lang
-            # Extract primary language code
-            primary_lang = lang.split('_')[0]
-            # Check if we have a translation for the primary language
-            if primary_lang in TRANSLATIONS:
-                return primary_lang
-    except:
-        pass
-    
-    # Fallback to checking LANGUAGE environment variable
-    try:
-        lang = os.environ.get('LANGUAGE', '').split(':')[0]
-        if lang:
-            # Check if we have a translation for the full locale
-            if lang in TRANSLATIONS:
-                return lang
-            # Extract primary language code
-            primary_lang = lang.split('_')[0]
-            # Check if we have a translation for the primary language
-            if primary_lang in TRANSLATIONS:
-                return primary_lang
-    except:
-        pass
-    
-    return "en"  # Default to English
+# Constants
+APP_ID = 'org.bigappearance.app'
+CONFIG_DIR = Path.home() / '.config' / 'big-appearance'
+BACKUP_DIR = CONFIG_DIR / 'backups'
+LAYOUTS_DIR = 'layouts'
+ICONS_DIR = 'icons'
+SETTINGS_FILE = CONFIG_DIR / 'settings.json'
 
-# Translation function
-def _(text):
-    lang = get_system_language()
-    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(text, text)
+# Theme color mapping
+COLOR_MAP = {
+    'blue': '#3584e4', 'green': '#26a269', 'yellow': '#cd9309',
+    'orange': '#e66100', 'red': '#c01c28', 'purple': '#9141ac',
+    'pink': '#d16d9e', 'teal': '#2190a4', 'grey': '#5e5c64',
+    'gray': '#5e5c64', 'black': '#241f31', 'white': '#ffffff',
+    'dark': '#241f31', 'light': '#ffffff', 'brown': '#865e3c',
+    'cyan': '#00b4c8', 'magenta': '#c061cb', 'lime': '#2ec27e',
+    'indigo': '#1c71d8'
+}
 
-# Backup utility functions
-def create_backup_dir():
-    """Create backup directory if it doesn't exist"""
-    backup_dir = os.path.expanduser("~/.config/big-appearance/backups")
-    os.makedirs(backup_dir, exist_ok=True)
-    return backup_dir
+# GNOME extensions data
+EXTENSIONS = [
+    {
+        "name": "Desktop Cube",
+        "description": "Rotate your desktop on a 3D cube",
+        "uuid": "desktop-cube@schneegans.github.com",
+        "url": "https://extensions.gnome.org/extension/4648/desktop-cube/"
+    },
+    {
+        "name": "Magic Lamp",
+        "description": "Animated window minimizing effect",
+        "uuid": "compiz-alike-magic-lamp-effect@hermes83.github.com",
+        "url": "https://extensions.gnome.org/extension/3740/compiz-alike-magic-lamp-effect/"
+    },
+    {
+        "name": "Windows Effects",
+        "description": "Additional window animations",
+        "uuid": "compiz-windows-effect@hermes83.github.com",
+        "url": "https://extensions.gnome.org/extension/3210/compiz-windows-effect/"
+    },
+    {
+        "name": "Desktop Icons",
+        "description": "Add icons to your desktop",
+        "uuid": "ding@rastersoft.com",
+        "url": "https://extensions.gnome.org/extension/2087/desktop-icons-ng-ding/",
+        "has_settings": True
+    }
+]
 
-def create_backup():
-    """Create a backup of current dconf settings"""
-    try:
-        backup_dir = create_backup_dir()
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(backup_dir, f"backup_{timestamp}.dconf")
+# Layout definitions
+LAYOUTS = [
+    ("Classic", "classic.txt", "classic.svg", "view-continuous-symbolic"),
+    ("Vanilla", "vanilla.txt", "vanilla.svg", "view-grid-symbolic"),
+    ("G-Unity", "g-unity.txt", "g-unity.svg", "view-app-grid-symbolic"),
+    ("New", "new.txt", "new.svg", "view-paged-symbolic"),
+    ("Next-Gnome", "next-gnome.txt", "next-gnome.svg", "view-paged-symbolic"),
+    ("Modern", "modern.txt", "modern.svg", "view-grid-symbolic")
+]
+
+class TranslationManager:
+    """Manages translations"""
+    
+    def __init__(self):
+        self._lang = self._get_system_language()
+    
+    def _get_system_language(self) -> str:
+        """Get the system language"""
+        try:
+            # Try to get the language from the locale
+            lang = locale.getdefaultlocale()[0]
+            if lang:
+                # Check if we have a translation for the full locale
+                if lang in TRANSLATIONS:
+                    return lang
+                # Extract primary language code (e.g., 'pt' from 'pt_BR')
+                primary_lang = lang.split('_')[0]
+                # Check if we have a translation for the primary language
+                if primary_lang in TRANSLATIONS:
+                    return primary_lang
+        except:
+            pass
         
-        # Create the backup
-        with open(backup_file, 'w') as f:
-            subprocess.run(["dconf", "dump", "/"], stdout=f, check=True)
+        # Fallback to checking environment variables
+        try:
+            lang = os.environ.get('LANG', '').split('.')[0]
+            if lang:
+                # Check if we have a translation for the full locale
+                if lang in TRANSLATIONS:
+                    return lang
+                # Extract primary language code
+                primary_lang = lang.split('_')[0]
+                # Check if we have a translation for the primary language
+                if primary_lang in TRANSLATIONS:
+                    return primary_lang
+        except:
+            pass
         
-        # Create a symlink to the latest backup
-        latest_backup = os.path.join(backup_dir, "latest_backup.dconf")
-        if os.path.exists(latest_backup):
-            os.remove(latest_backup)
-        os.symlink(backup_file, latest_backup)
+        # Fallback to checking LANGUAGE environment variable
+        try:
+            lang = os.environ.get('LANGUAGE', '').split(':')[0]
+            if lang:
+                # Check if we have a translation for the full locale
+                if lang in TRANSLATIONS:
+                    return lang
+                # Extract primary language code
+                primary_lang = lang.split('_')[0]
+                # Check if we have a translation for the primary language
+                if primary_lang in TRANSLATIONS:
+                    return primary_lang
+        except:
+            pass
         
-        return backup_file
-    except Exception as e:
-        print(f"Backup error: {e}")
+        return "en"  # Default to English
+    
+    def _(self, text: str) -> str:
+        """Translate text"""
+        return TRANSLATIONS.get(self._lang, TRANSLATIONS["en"]).get(text, text)
+
+class ThemeManager:
+    """Manages theme operations"""
+    
+    @staticmethod
+    def extract_color_from_theme_name(theme_name: str) -> str:
+        """Extract color from theme name"""
+        theme_lower = theme_name.lower()
+        for color_name, hex_code in COLOR_MAP.items():
+            if color_name in theme_lower:
+                return hex_code
+        
+        # Default colors if no match
+        if 'dark' in theme_lower:
+            return '#241f31'
+        if 'light' in theme_lower:
+            return '#ffffff'
+        
+        # Generate a color based on the theme name hash
+        hash_value = hash(theme_name)
+        r = (hash_value & 0xFF0000) >> 16
+        g = (hash_value & 0x00FF00) >> 8
+        b = hash_value & 0x0000FF
+        return f'#{r:02x}{g:02x}{b:02x}'
+    
+    @staticmethod
+    def get_themes(theme_type: str) -> List[Tuple[str, str]]:
+        """Get available themes of a specific type"""
+        themes = []
+        
+        # Define search paths based on theme type
+        if theme_type in ("gtk", "shell"):
+            search_paths = [
+                Path.home() / '.themes',
+                Path('/usr/local/share/themes'),
+                Path('/usr/share/themes')
+            ]
+        elif theme_type == "icons":
+            search_paths = [
+                Path.home() / '.icons',
+                Path('/usr/local/share/icons'),
+                Path('/usr/share/icons')
+            ]
+        else:
+            return themes
+        
+        # Check all search paths
+        for search_path in search_paths:
+            if not search_path.exists():
+                continue
+                
+            # Get all theme directories
+            for theme_dir in search_path.iterdir():
+                if not theme_dir.is_dir():
+                    continue
+                
+                # Check based on theme type
+                if theme_type == "gtk":
+                    # Check for gtk-3.0 or gtk-2.0 directory
+                    if (theme_dir / "gtk-3.0").exists() or (theme_dir / "gtk-2.0").exists():
+                        themes.append((theme_dir.name, str(theme_dir)))
+                
+                elif theme_type == "icons":
+                    # Check for index.theme file
+                    if (theme_dir / "index.theme").exists():
+                        themes.append((theme_dir.name, str(theme_dir)))
+                
+                elif theme_type == "shell":
+                    # Check for gnome-shell directory
+                    shell_dir = theme_dir / "gnome-shell"
+                    if shell_dir.exists():
+                        # Check for required files
+                        if (shell_dir / "gnome-shell.css").exists() or (shell_dir / "gnome-shell.gresource").exists():
+                            themes.append((theme_dir.name, str(theme_dir)))
+        
+        # Remove duplicates and sort
+        themes = list(set(themes))
+        themes.sort(key=lambda x: x[0].lower())
+        
+        return themes
+
+class BackupManager:
+    """Manages backup operations"""
+    
+    @staticmethod
+    def create_backup_dir() -> Path:
+        """Create backup directory if it doesn't exist"""
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        return BACKUP_DIR
+    
+    @staticmethod
+    def create_backup() -> Optional[Path]:
+        """Create a backup of current dconf settings"""
+        try:
+            backup_dir = BackupManager.create_backup_dir()
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = backup_dir / f"backup_{timestamp}.dconf"
+            
+            # Create the backup
+            with open(backup_file, 'w') as f:
+                subprocess.run(["dconf", "dump", "/"], stdout=f, check=True)
+            
+            # Create a symlink to the latest backup
+            latest_backup = backup_dir / "latest_backup.dconf"
+            if latest_backup.exists():
+                latest_backup.unlink()
+            latest_backup.symlink_to(backup_file)
+            
+            return backup_file
+        except Exception as e:
+            print(f"Backup error: {e}")
+            return None
+    
+    @staticmethod
+    def restore_backup(backup_file: Path) -> bool:
+        """Restore settings from a backup file"""
+        try:
+            if not backup_file.exists():
+                return False
+            
+            # Load the backup
+            subprocess.run(["dconf", "load", "/"], stdin=open(backup_file, 'r'), check=True)
+            return True
+        except Exception as e:
+            print(f"Restore error: {e}")
+            return False
+    
+    @staticmethod
+    def get_latest_backup() -> Optional[Path]:
+        """Get the path to the latest backup file"""
+        backup_dir = BackupManager.create_backup_dir()
+        latest_backup = backup_dir / "latest_backup.dconf"
+        
+        if latest_backup.exists():
+            if latest_backup.is_symlink():
+                return Path(os.path.realpath(latest_backup))
+            return latest_backup
+        
+        # If no symlink, find the most recent backup
+        backups = list(backup_dir.glob("backup_*.dconf"))
+        if backups:
+            return max(backups, key=lambda x: x.stat().st_mtime)
+        
         return None
 
-def restore_backup(backup_file):
-    """Restore settings from a backup file"""
-    try:
-        if not os.path.exists(backup_file):
-            return False
+class ExtensionManager:
+    """Manages GNOME Shell extensions"""
+    
+    @staticmethod
+    def check_extension_installed(uuid: str) -> bool:
+        """Check if a GNOME extension is installed"""
+        user_extensions = Path.home() / '.local/share/gnome-shell/extensions'
+        system_extensions = Path('/usr/share/gnome-shell/extensions')
         
-        # Load the backup
-        subprocess.run(["dconf", "load", "/"], stdin=open(backup_file, 'r'), check=True)
-        return True
-    except Exception as e:
-        print(f"Restore error: {e}")
+        # Check user extensions
+        if (user_extensions / uuid).exists():
+            return True
+        
+        # Check system extensions
+        if (system_extensions / uuid).exists():
+            return True
+        
         return False
+    
+    @staticmethod
+    def check_extension_enabled(uuid: str) -> bool:
+        """Check if a GNOME extension is enabled"""
+        try:
+            # Get list of enabled extensions
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            # Parse the list
+            enabled_extensions = result.stdout.strip().strip("[]").replace("'", "").split(", ")
+            
+            # Check if our extension is in the list
+            return uuid in enabled_extensions
+        except:
+            return False
+    
+    @staticmethod
+    def toggle_extension(uuid: str, enable: bool) -> bool:
+        """Enable or disable a GNOME extension"""
+        try:
+            # Get current list of enabled extensions
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            # Parse the list
+            enabled_extensions = result.stdout.strip().strip("[]").replace("'", "").split(", ")
+            
+            if enable:
+                # Add extension to list if not already there
+                if uuid not in enabled_extensions:
+                    enabled_extensions.append(uuid)
+            else:
+                # Remove extension from list
+                if uuid in enabled_extensions:
+                    enabled_extensions.remove(uuid)
+            
+            # Set the new list
+            new_list = "@as [" + ", ".join([f"'{ext}'" for ext in enabled_extensions if ext]) + "]"
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.shell", "enabled-extensions", new_list],
+                check=True
+            )
+            
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error toggling extension: {e}")
+            return False
+    
+    @staticmethod
+    def check_gnome_extensions_enabled() -> bool:
+        """Check if GNOME Shell extensions are enabled"""
+        try:
+            # Check if extensions are disabled
+            result = subprocess.run(
+                ["dconf", "read", "/org/gnome/shell/disable-extensions"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            # If the key is set to 'true', extensions are disabled
+            return result.stdout.strip().lower() != "true"
+        except subprocess.CalledProcessError as e:
+            print(f"Error checking extensions status: {e}")
+            # Assume extensions are enabled if we can't check
+            return True
+        except Exception as e:
+            print(f"Unexpected error checking extensions status: {e}")
+            return True
+    
+    @staticmethod
+    def enable_gnome_extensions() -> bool:
+        """Enable GNOME Shell extensions"""
+        try:
+            subprocess.run(
+                ["dconf", "write", "/org/gnome/shell/disable-extensions", "false"],
+                check=True
+            )
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error enabling extensions: {e}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error enabling extensions: {e}")
+            return False
 
-def get_latest_backup():
-    """Get the path to the latest backup file"""
-    backup_dir = create_backup_dir()
-    latest_backup = os.path.join(backup_dir, "latest_backup.dconf")
+class SystemUtils:
+    """System utility functions"""
     
-    if os.path.exists(latest_backup):
-        if os.path.islink(latest_backup):
-            return os.path.realpath(latest_backup)
-        return latest_backup
-    
-    # If no symlink, find the most recent backup
-    backups = glob.glob(os.path.join(backup_dir, "backup_*.dconf"))
-    if backups:
-        return max(backups, key=os.path.getctime)
-    
-    return None
-
-# Detect desktop environment
-def detect_desktop_environment():
-    desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
-    if 'gnome' in desktop:
-        return 'gnome'
-    else:
-        # Fallback to checking other environment variables
-        if 'GNOME_DESKTOP_SESSION_ID' in os.environ:
+    @staticmethod
+    def detect_desktop_environment() -> str:
+        """Detect the current desktop environment"""
+        desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+        if 'gnome' in desktop:
             return 'gnome'
-        return 'gnome'  # Default to GNOME
+        else:
+            # Fallback to checking other environment variables
+            if 'GNOME_DESKTOP_SESSION_ID' in os.environ:
+                return 'gnome'
+            return 'gnome'  # Default to GNOME
+    
+    @staticmethod
+    def find_file(file_name: str, search_dirs: List[str]) -> Optional[str]:
+        """Search for a file in common locations"""
+        if not file_name:
+            return None
+            
+        possible_paths = []
+        
+        # Add script-relative paths
+        script_dir = Path(__file__).parent
+        for search_dir in search_dirs:
+            possible_paths.append(script_dir / search_dir / file_name)
+            possible_paths.append(Path.home() / f".local/share/{search_dir}" / file_name)
+            possible_paths.append(Path(f"/usr/share/{search_dir}") / file_name)
+            possible_paths.append(Path(f"/usr/local/share/{search_dir}") / file_name)
+        
+        # Try with different extensions
+        base_name, ext = os.path.splitext(file_name)
+        for ext in ['.png', '.jpg', '.jpeg', '.svg']:
+            for path in possible_paths:
+                test_path = path.with_suffix(ext)
+                if test_path.exists():
+                    return str(test_path)
+        
+        # Try original paths
+        for path in possible_paths:
+            if path.exists():
+                return str(path)
+        
+        return None
 
-# Extract color from theme name
-def extract_color_from_theme_name(theme_name):
-    color_map = {
-        'blue': '#3584e4',
-        'green': '#26a269',
-        'yellow': '#cd9309',
-        'orange': '#e66100',
-        'red': '#c01c28',
-        'purple': '#9141ac',
-        'pink': '#d16d9e',
-        'teal': '#2190a4',
-        'grey': '#5e5c64',
-        'gray': '#5e5c64',
-        'black': '#241f31',
-        'white': '#ffffff',
-        'dark': '#241f31',
-        'light': '#ffffff',
-        'brown': '#865e3c',
-        'cyan': '#00b4c8',
-        'magenta': '#c061cb',
-        'lime': '#2ec27e',
-        'indigo': '#1c71d8'
-    }
+class SettingsManager:
+    """Manages application settings"""
     
-    theme_lower = theme_name.lower()
-    for color_name, hex_code in color_map.items():
-        if color_name in theme_lower:
-            return hex_code
+    def __init__(self):
+        self.settings_file = SETTINGS_FILE
+        self.settings = self._load_settings()
     
-    # Default colors if no match
-    if 'dark' in theme_lower:
-        return '#241f31'
-    if 'light' in theme_lower:
-        return '#ffffff'
+    def _load_settings(self) -> Dict:
+        """Load application settings"""
+        if not CONFIG_DIR.exists():
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if self.settings_file.exists():
+            try:
+                with open(self.settings_file, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+        
+        return {"intro_shown": False}
     
-    # Generate a color based on the theme name hash
-    hash_value = hash(theme_name)
-    r = (hash_value & 0xFF0000) >> 16
-    g = (hash_value & 0x00FF00) >> 8
-    b = hash_value & 0x0000FF
-    return f'#{r:02x}{g:02x}{b:02x}'
+    def save_settings(self):
+        """Save application settings"""
+        try:
+            with open(self.settings_file, 'w') as f:
+                json.dump(self.settings, f)
+        except:
+            pass
+    
+    def get(self, key: str, default=None):
+        """Get a setting value"""
+        return self.settings.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set a setting value"""
+        self.settings[key] = value
+        self.save_settings()
+
+class LayoutRow(Gtk.ListBoxRow):
+    """Custom layout row widget"""
+    
+    def __init__(self, name: str, icon_file: str, fallback_icon: str, config_file: str, translator):
+        super().__init__()
+        self.add_css_class("layout-row")
+        
+        # Store the layout data
+        self.layout_name = name
+        self.config_file = config_file
+        
+        # Create row content
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row_box.set_margin_start(12)
+        row_box.set_margin_end(12)
+        row_box.set_margin_top(10)
+        row_box.set_margin_bottom(10)
+        
+        # Create icon container
+        icon_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        icon_container.set_size_request(60, 60)
+        icon_container.add_css_class("icon-container")
+        
+        # Icon frame
+        icon_frame = Gtk.Box()
+        icon_frame.set_size_request(48, 48)
+        icon_frame.add_css_class("icon-frame")
+        icon_frame.set_halign(Gtk.Align.CENTER)
+        icon_frame.set_valign(Gtk.Align.CENTER)
+        
+        # Create image
+        image = Gtk.Picture()
+        image.set_size_request(40, 40)
+        image.set_content_fit(Gtk.ContentFit.CONTAIN)
+        image.set_halign(Gtk.Align.CENTER)
+        image.set_valign(Gtk.Align.CENTER)
+        
+        # Try to load custom icon
+        if icon_file:
+            icon_path = SystemUtils.find_file(icon_file, [ICONS_DIR])
+            if icon_path:
+                image.set_filename(icon_path)
+            else:
+                # Use fallback icon
+                fallback_image = Gtk.Image.new_from_icon_name(fallback_icon)
+                fallback_image.set_pixel_size(32)
+                image.set_paintable(fallback_image.get_paintable())
+        else:
+            # Use fallback icon
+            fallback_image = Gtk.Image.new_from_icon_name(fallback_icon)
+            fallback_image.set_pixel_size(32)
+            image.set_paintable(fallback_image.get_paintable())
+        
+        icon_frame.append(image)
+        icon_container.append(icon_frame)
+        
+        # Create label
+        label = Gtk.Label(label=name)
+        label.add_css_class("layout-label")
+        label.set_halign(Gtk.Align.START)
+        label.set_valign(Gtk.Align.CENTER)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(12)
+        
+        # Add to row box
+        row_box.append(icon_container)
+        row_box.append(label)
+        self.set_child(row_box)
+
+class ThemeCard(Gtk.Box):
+    """Custom theme card widget"""
+    
+    def __init__(self, theme_name: str, theme_path: str, theme_type: str, translator, on_apply):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.add_css_class("card")
+        self.set_size_request(200, 200)
+        self.set_margin_start(10)
+        self.set_margin_end(10)
+        self.set_margin_top(10)
+        self.set_margin_bottom(10)
+        
+        # Extract color from theme name
+        color = ThemeManager.extract_color_from_theme_name(theme_name)
+        
+        # Create color circle
+        color_circle = Gtk.DrawingArea()
+        color_circle.set_size_request(80, 80)
+        color_circle.set_halign(Gtk.Align.CENTER)
+        color_circle.set_margin_top(20)
+        color_circle.set_draw_func(self._draw_color_circle, color)
+        self.append(color_circle)
+        
+        # Theme name
+        name_label = Gtk.Label()
+        name_label.set_text(theme_name)
+        name_label.add_css_class("title-4")
+        name_label.set_margin_top(15)
+        name_label.set_halign(Gtk.Align.CENTER)
+        name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        name_label.set_max_width_chars(15)
+        self.append(name_label)
+        
+        # Apply button
+        apply_button = Gtk.Button(label=translator._("apply_theme"))
+        apply_button.add_css_class("pill")
+        apply_button.set_margin_top(15)
+        apply_button.set_margin_bottom(20)
+        apply_button.set_halign(Gtk.Align.CENTER)
+        apply_button.connect("clicked", lambda btn: on_apply(theme_name, theme_type))
+        self.append(apply_button)
+    
+    def _draw_color_circle(self, drawing_area, ctx, width, height, color):
+        """Draw a color circle"""
+        # Set background color
+        ctx.set_source_rgb(int(color[1:3], 16)/255, int(color[3:5], 16)/255, int(color[5:7], 16)/255)
+        
+        # Draw circle
+        ctx.arc(width/2, height/2, min(width, height)/2 - 5, 0, 2 * 3.14159)
+        ctx.fill()
+
+class EffectCard(Gtk.Box):
+    """Custom effect card widget"""
+    
+    def __init__(self, effect: Dict, translator, on_toggle, on_install, on_settings):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.add_css_class("card")
+        self.set_size_request(250, 220)
+        self.effect = effect
+        self.translator = translator
+        
+        # Effect icon
+        effect_icon = Gtk.Image.new_from_icon_name("applications-graphics-symbolic")
+        effect_icon.set_pixel_size(48)
+        effect_icon.set_margin_top(20)
+        effect_icon.set_halign(Gtk.Align.CENTER)
+        self.append(effect_icon)
+        
+        # Effect name
+        effect_name = Gtk.Label()
+        effect_name.set_text(effect["name"])
+        effect_name.add_css_class("title-3")
+        effect_name.set_margin_top(10)
+        effect_name.set_halign(Gtk.Align.CENTER)
+        self.append(effect_name)
+        
+        # Effect description
+        effect_description = Gtk.Label()
+        effect_description.set_text(effect["description"])
+        effect_description.add_css_class("body")
+        effect_description.set_margin_top(5)
+        effect_description.set_margin_bottom(15)
+        effect_description.set_halign(Gtk.Align.CENTER)
+        effect_description.set_wrap(True)
+        effect_description.set_max_width_chars(20)
+        self.append(effect_description)
+        
+        # Check if extension is installed
+        installed = ExtensionManager.check_extension_installed(effect["uuid"])
+        
+        if installed:
+            # Check if extension is enabled
+            enabled = ExtensionManager.check_extension_enabled(effect["uuid"])
+            
+            # Create toggle switch
+            toggle = Gtk.Switch()
+            toggle.set_active(enabled)
+            toggle.set_halign(Gtk.Align.CENTER)
+            toggle.set_margin_bottom(10)
+            toggle.connect("notify::active", lambda switch, _: on_toggle(effect["uuid"], switch.get_active()))
+            self.append(toggle)
+            
+            # Status label
+            status_label = Gtk.Label()
+            status_label.set_text(translator._("enable") if not enabled else translator._("disable"))
+            status_label.add_css_class("body")
+            status_label.set_halign(Gtk.Align.CENTER)
+            status_label.set_margin_bottom(10)
+            self.append(status_label)
+            
+            # Add settings button if extension has settings and is enabled
+            if effect.get("has_settings", False) and enabled:
+                settings_button = Gtk.Button()
+                settings_button.set_icon_name("settings-symbolic")
+                settings_button.set_tooltip_text(translator._("extension_settings"))
+                settings_button.set_halign(Gtk.Align.CENTER)
+                settings_button.set_margin_bottom(10)
+                settings_button.connect("clicked", lambda btn: on_settings(effect["uuid"]))
+                self.append(settings_button)
+        else:
+            # Install button
+            install_button = Gtk.Button(label=translator._("install_extension"))
+            install_button.add_css_class("pill")
+            install_button.set_margin_bottom(20)
+            install_button.connect("clicked", lambda btn: on_install(effect["url"]))
+            self.append(install_button)
 
 class BigAppearanceWindow(Adw.ApplicationWindow):
+    """Main application window"""
+    
     def __init__(self, app):
         super().__init__(application=app)
-        self.set_title(_("app_name"))
+        self.translator = TranslationManager()
+        self.settings_manager = SettingsManager()
+        
+        # Window setup
+        self.set_title(self.translator._("app_name"))
         self.set_default_size(900, 600)
         self.set_size_request(800, 500)
         
         # Detect desktop environment
-        self.desktop_env = detect_desktop_environment()
+        self.desktop_env = SystemUtils.detect_desktop_environment()
         print(f"Detected desktop environment: {self.desktop_env}")
-        print(f"System language: {get_system_language()}")
+        print(f"System language: {self.translator._lang}")
         
         # Initialize state variables
         self.applying = False
-        self.updating_selection = False  # Flag to prevent selection loops
-        self.selected_item = None
-        self.selected_type = None
+        self.updating_selection = False
+        self.selected_layout_item = None
         self.test_mode = False
         self.backup_created = False
-        
-        # Load settings
-        self.settings = self.load_settings()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         
         # Create UI components
         self.create_ui()
@@ -721,64 +1233,8 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         self.connect("notify::default-height", self.on_resize)
         
         # Show intro dialog if needed
-        if not self.settings.get("intro_shown", False):
+        if not self.settings_manager.get("intro_shown", False):
             self.show_intro_dialog()
-    
-    def load_settings(self):
-        """Load application settings"""
-        settings_dir = os.path.expanduser("~/.config/big-appearance")
-        settings_file = os.path.join(settings_dir, "settings.json")
-        
-        if not os.path.exists(settings_dir):
-            os.makedirs(settings_dir, exist_ok=True)
-        
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, 'r') as f:
-                    return json.load(f)
-            except:
-                pass
-        
-        return {"intro_shown": False}
-    
-    def save_settings(self):
-        """Save application settings"""
-        settings_dir = os.path.expanduser("~/.config/big-appearance")
-        settings_file = os.path.join(settings_dir, "settings.json")
-        
-        try:
-            with open(settings_file, 'w') as f:
-                json.dump(self.settings, f)
-        except:
-            pass
-    
-    def show_intro_dialog(self):
-        """Show introduction dialog"""
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            heading=_("intro_title"),
-            body=_("intro_message"),
-        )
-        
-        dialog.add_response("close", _("close"))
-        dialog.set_response_appearance("close", Adw.ResponseAppearance.SUGGESTED)
-        
-        # Add "Don't show again" checkbox
-        dont_show_check = Gtk.CheckButton(label=_("intro_dont_show"))
-        dont_show_check.set_margin_top(12)
-        dont_show_check.set_halign(Gtk.Align.CENTER)
-        dialog.set_extra_child(dont_show_check)
-        
-        dialog.connect("response", self.on_intro_dialog_response, dont_show_check)
-        dialog.present()
-    
-    def on_intro_dialog_response(self, dialog, response, dont_show_check):
-        """Handle response from intro dialog"""
-        if dont_show_check.get_active():
-            self.settings["intro_shown"] = True
-            self.save_settings()
-        
-        dialog.destroy()
     
     def create_ui(self):
         """Create all UI components"""
@@ -791,7 +1247,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Add window title
         title_label = Gtk.Label()
-        title_label.set_text(_("app_name"))
+        title_label.set_text(self.translator._("app_name"))
         title_label.add_css_class("title-3")
         header_bar.set_title_widget(title_label)
         
@@ -801,13 +1257,16 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Create menu model
         menu = Gio.Menu()
-        menu.append(_("backup_restore"), "app.restore_backup")
-        menu.append(_("about"), "app.about")
-        menu.append(_("quit"), "app.quit")
+        menu.append(self.translator._("backup_restore"), "app.restore_backup")
+        menu.append(self.translator._("about"), "app.about")
+        menu.append(self.translator._("quit"), "app.quit")
         
         # Set menu to button
         menu_button.set_menu_model(menu)
         header_bar.pack_end(menu_button)
+        
+        # Create toast overlay
+        self.toast_overlay = Adw.ToastOverlay()
         
         # Create tab view for the three main sections
         self.tab_view = Adw.TabView()
@@ -820,13 +1279,13 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Add tabs to tab view
         layouts_page = self.tab_view.append(self.layouts_tab)
-        layouts_page.set_title(_("layouts_tab"))
+        layouts_page.set_title(self.translator._("layouts_tab"))
         
         effects_page = self.tab_view.append(self.effects_tab)
-        effects_page.set_title(_("effects_tab"))
+        effects_page.set_title(self.translator._("effects_tab"))
         
         themes_page = self.tab_view.append(self.themes_tab)
-        themes_page.set_title(_("themes_tab"))
+        themes_page.set_title(self.translator._("themes_tab"))
         
         # Create tab bar
         tab_bar = Adw.TabBar()
@@ -839,23 +1298,14 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         main_box.append(self.tab_view)
         
         # Set main content
-        toolbar_view.set_content(main_box)
+        self.toast_overlay.set_child(main_box)
+        toolbar_view.set_content(self.toast_overlay)
         
         # Set toolbar view as window content
         self.set_content(toolbar_view)
     
     def create_layouts_tab(self):
         """Create the Layouts tab"""
-        # Define layouts for GNOME
-        layouts = [
-            ("Classic", "classic.txt", "classic.svg", "view-continuous-symbolic"),
-            ("Vanilla", "vanilla.txt", "vanilla.svg", "view-grid-symbolic"),
-            ("G-Unity", "g-unity.txt", "g-unity.svg", "view-app-grid-symbolic"),
-            ("New", "new.txt", "new.svg", "view-paged-symbolic"),
-            ("Next-Gnome", "next-gnome.txt", "next-gnome.svg", "view-paged-symbolic"),
-            ("Modern", "modern.txt", "modern.svg", "view-grid-symbolic")
-        ]
-        
         # Create main container
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         container.set_margin_start(20)
@@ -865,7 +1315,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Title
         title = Gtk.Label()
-        title.set_text(_("layouts_tab"))
+        title.set_text(self.translator._("layouts_tab"))
         title.add_css_class("title-1")
         title.set_margin_bottom(20)
         title.set_halign(Gtk.Align.START)
@@ -873,7 +1323,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Description
         description = Gtk.Label()
-        description.set_text(_("select_layout"))
+        description.set_text(self.translator._("select_layout"))
         description.add_css_class("body")
         description.set_margin_bottom(30)
         description.set_halign(Gtk.Align.START)
@@ -933,14 +1383,14 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         buttons_box.set_spacing(10)
         
         # Test button
-        self.test_button = Gtk.Button(label=_("test_layout"))
+        self.test_button = Gtk.Button(label=self.translator._("test_layout"))
         self.test_button.add_css_class("pill")
         self.test_button.set_size_request(150, 40)
         self.test_button.connect("clicked", self.on_test_layout_clicked)
         buttons_box.append(self.test_button)
         
         # Apply button
-        self.apply_button = Gtk.Button(label=_("apply"))
+        self.apply_button = Gtk.Button(label=self.translator._("apply"))
         self.apply_button.add_css_class("suggested-action")
         self.apply_button.add_css_class("pill")
         self.apply_button.set_size_request(150, 40)
@@ -976,7 +1426,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         
         # Sidebar header
         sidebar_header = Gtk.Label()
-        sidebar_header.set_text(_("select_layout"))
+        sidebar_header.set_text(self.translator._("select_layout"))
         sidebar_header.add_css_class("title-3")
         sidebar_header.set_margin_start(15)
         sidebar_header.set_margin_top(15)
@@ -999,14 +1449,12 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         # Layout list box
         self.layout_list_box = Gtk.ListBox()
         self.layout_list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        
-        # Connect row-selected signal for single click selection
         self.layout_list_box.connect("row-selected", self.on_layout_row_selected)
         
-        # Create layout buttons
+        # Create layout rows
         self.layout_buttons = []
-        for name, config_file, icon_file, fallback_icon in layouts:
-            row = self.create_layout_row(name, icon_file, fallback_icon, config_file)
+        for name, config_file, icon_file, fallback_icon in LAYOUTS:
+            row = LayoutRow(name, icon_file, fallback_icon, config_file, self.translator)
             self.layout_list_box.append(row)
             self.layout_buttons.append((row, name, config_file))
         
@@ -1016,98 +1464,171 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         paned.set_end_child(sidebar_box)
         container.append(paned)
         
-        # Store layouts for later use
-        self.layouts = layouts
-        
         # Select first layout by default
-        if layouts:
-            self.select_layout_item((layouts[0][0], layouts[0][1]))
+        if LAYOUTS:
+            self.select_layout_item((LAYOUTS[0][0], LAYOUTS[0][1]))
         
         return container
     
-    def create_layout_row(self, name, icon_file, fallback_icon, config_file):
-        """Create a layout row for the sidebar with improved image sizing"""
-        row = Gtk.ListBoxRow()
-        row.add_css_class("layout-row")
+    def create_effects_tab(self):
+        """Create the Effects tab"""
+        # Create main container
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        container.set_margin_start(20)
+        container.set_margin_end(20)
+        container.set_margin_top(20)
+        container.set_margin_bottom(20)
         
-        # Store the layout data in the row for easy access
-        row.layout_name = name
-        row.config_file = config_file
+        # Title
+        title = Gtk.Label()
+        title.set_text(self.translator._("effects_tab"))
+        title.add_css_class("title-1")
+        title.set_margin_bottom(20)
+        title.set_halign(Gtk.Align.START)
+        container.append(title)
         
-        # Row content with improved layout
-        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        row_box.set_margin_start(12)
-        row_box.set_margin_end(12)
-        row_box.set_margin_top(10)
-        row_box.set_margin_bottom(10)
+        # Description
+        description = Gtk.Label()
+        description.set_text(self.translator._("effects_description"))
+        description.add_css_class("body")
+        description.set_margin_bottom(30)
+        description.set_halign(Gtk.Align.START)
+        container.append(description)
         
-        # Create icon container with consistent sizing
-        icon_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        icon_container.set_size_request(60, 60)  # Fixed size for all icons
-        icon_container.add_css_class("icon-container")
+        # Check if running on GNOME
+        if self.desktop_env != 'gnome':
+            # Show message that effects are only available on GNOME
+            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            info_box.set_halign(Gtk.Align.CENTER)
+            info_box.set_valign(Gtk.Align.CENTER)
+            info_box.set_vexpand(True)
+            
+            info_icon = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
+            info_icon.set_pixel_size(64)
+            info_icon.set_margin_bottom(20)
+            info_box.append(info_icon)
+            
+            info_label = Gtk.Label()
+            info_label.set_text(self.translator._("gnome_only"))
+            info_label.add_css_class("title-3")
+            info_label.set_wrap(True)
+            info_label.set_max_width_chars(30)
+            info_box.append(info_label)
+            
+            container.append(info_box)
+            return container
         
-        # Icon frame with consistent styling
-        icon_frame = Gtk.Box()
-        icon_frame.set_size_request(48, 48)  # Fixed icon frame size
-        icon_frame.add_css_class("icon-frame")
-        icon_frame.set_halign(Gtk.Align.CENTER)
-        icon_frame.set_valign(Gtk.Align.CENTER)
+        # Create effects grid
+        effects_grid = Gtk.Grid()
+        effects_grid.set_row_spacing(20)
+        effects_grid.set_column_spacing(20)
+        effects_grid.set_halign(Gtk.Align.CENTER)
+        effects_grid.set_valign(Gtk.Align.CENTER)
+        effects_grid.set_vexpand(True)
         
-        # Create image with consistent sizing
-        image = Gtk.Picture()
-        image.set_size_request(40, 40)  # Fixed image size
-        image.set_content_fit(Gtk.ContentFit.CONTAIN)
-        image.set_halign(Gtk.Align.CENTER)
-        image.set_valign(Gtk.Align.CENTER)
+        # Create effect cards
+        for i, effect in enumerate(EXTENSIONS):
+            effect_card = EffectCard(
+                effect, 
+                self.translator,
+                self.toggle_extension,
+                self.open_url,
+                self.open_extension_settings
+            )
+            effects_grid.attach(effect_card, i % 3, i // 3, 1, 1)
         
-        # Try to load custom icon if icon_file is provided
-        if icon_file:
-            icon_path = self.find_icon(icon_file)
-            if icon_path:
-                image.set_filename(icon_path)
-            else:
-                # Use fallback icon
-                fallback_image = Gtk.Image.new_from_icon_name(fallback_icon)
-                fallback_image.set_pixel_size(32)  # Consistent fallback size
-                image.set_paintable(fallback_image.get_paintable())
+        container.append(effects_grid)
+        
+        return container
+    
+    def create_themes_tab(self):
+        """Create the Themes tab"""
+        # Create main container
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        container.set_margin_start(20)
+        container.set_margin_end(20)
+        container.set_margin_top(20)
+        container.set_margin_bottom(20)
+        
+        # Title
+        title = Gtk.Label()
+        title.set_text(self.translator._("themes_tab"))
+        title.add_css_class("title-1")
+        title.set_margin_bottom(20)
+        title.set_halign(Gtk.Align.START)
+        container.append(title)
+        
+        # Description
+        description = Gtk.Label()
+        description.set_text(self.translator._("themes_description"))
+        description.add_css_class("body")
+        description.set_margin_bottom(30)
+        description.set_halign(Gtk.Align.START)
+        container.append(description)
+        
+        # Create theme categories
+        theme_notebook = Gtk.Notebook()
+        theme_notebook.set_vexpand(True)
+        
+        # GTK Themes
+        gtk_themes_page = self.create_theme_page("gtk")
+        gtk_themes_label = Gtk.Label(label=self.translator._("gtk_theme"))
+        theme_notebook.append_page(gtk_themes_page, gtk_themes_label)
+        
+        # Icon Themes
+        icon_themes_page = self.create_theme_page("icons")
+        icon_themes_label = Gtk.Label(label=self.translator._("icon_theme"))
+        theme_notebook.append_page(icon_themes_page, icon_themes_label)
+        
+        # Shell Themes
+        shell_themes_page = self.create_theme_page("shell")
+        shell_themes_label = Gtk.Label(label=self.translator._("shell_theme"))
+        theme_notebook.append_page(shell_themes_page, shell_themes_label)
+        
+        container.append(theme_notebook)
+        
+        return container
+    
+    def create_theme_page(self, theme_type: str):
+        """Create a theme page for a specific type"""
+        # Create scrolled window
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_vexpand(True)
+        
+        # Create flow box for themes
+        flow_box = Gtk.FlowBox()
+        flow_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        flow_box.set_max_children_per_line(4)
+        flow_box.set_min_children_per_line(2)
+        flow_box.set_halign(Gtk.Align.CENTER)
+        flow_box.set_valign(Gtk.Align.START)
+        flow_box.set_row_spacing(20)
+        flow_box.set_column_spacing(20)
+        
+        # Get themes based on type
+        themes = ThemeManager.get_themes(theme_type)
+        
+        if not themes:
+            # No themes found message
+            no_themes_label = Gtk.Label()
+            no_themes_label.set_text(self.translator._("no_themes_found"))
+            no_themes_label.add_css_class("title-3")
+            no_themes_label.set_margin_top(50)
+            no_themes_label.set_halign(Gtk.Align.CENTER)
+            flow_box.append(no_themes_label)
         else:
-            # Use fallback icon
-            fallback_image = Gtk.Image.new_from_icon_name(fallback_icon)
-            fallback_image.set_pixel_size(32)  # Consistent fallback size
-            image.set_paintable(fallback_image.get_paintable())
+            # Create theme cards
+            for theme_name, theme_path in themes:
+                theme_card = ThemeCard(theme_name, theme_path, theme_type, self.translator, self.apply_theme)
+                flow_box.append(theme_card)
         
-        icon_frame.append(image)
-        icon_container.append(icon_frame)
-        
-        # Create label container
-        label_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        label_container.set_halign(Gtk.Align.START)
-        label_container.set_valign(Gtk.Align.CENTER)
-        label_container.set_hexpand(True)
-        
-        # Create label with improved styling
-        label = Gtk.Label(label=name)
-        label.add_css_class("layout-label")
-        label.set_halign(Gtk.Align.START)
-        label.set_valign(Gtk.Align.CENTER)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_max_width_chars(12)  # Consistent text width
-        
-        label_container.append(label)
-        
-        # Add to row box
-        row_box.append(icon_container)
-        row_box.append(label_container)
-        row.set_child(row_box)
-        
-        return row
+        scrolled_window.set_child(flow_box)
+        return scrolled_window
     
     def on_layout_row_selected(self, list_box, row):
         """Handle row selection (single click)"""
-        if self.updating_selection:
-            return
-            
-        if row is None:
+        if self.updating_selection or row is None:
             return
             
         # Get the layout data directly from the row
@@ -1132,17 +1653,17 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
     def update_layout_preview(self, name):
         """Update the preview area"""
         self.preview_title.set_text(name)
-        self.preview_description.set_text(_("description_layout").format(layout=name))
+        self.preview_description.set_text(self.translator._("description_layout").format(layout=name))
         
         # Try to load preview image
         icon_path = None
-        for layout in self.layouts:
+        for layout in LAYOUTS:
             if layout[0] == name:
-                icon_path = self.find_icon(layout[2])
+                icon_path = SystemUtils.find_file(layout[2], [ICONS_DIR])
                 break
         
         # Set image or fallback
-        if icon_path and isinstance(icon_path, str) and os.path.exists(icon_path):
+        if icon_path and os.path.exists(icon_path):
             self.preview_image.set_filename(icon_path)
         else:
             # Use fallback icon
@@ -1179,12 +1700,12 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         # Ask user if they want to test the layout
         dialog = Adw.MessageDialog(
             transient_for=self,
-            heading=_("test_layout_title"),
-            body=_("test_layout_message"),
+            heading=self.translator._("test_layout_title"),
+            body=self.translator._("test_layout_message"),
         )
         
-        dialog.add_response("cancel", _("cancel"))
-        dialog.add_response("test", _("test_layout"))
+        dialog.add_response("cancel", self.translator._("cancel"))
+        dialog.add_response("test", self.translator._("test_layout"))
         dialog.set_response_appearance("test", Adw.ResponseAppearance.SUGGESTED)
         
         dialog.connect("response", self.on_test_dialog_response)
@@ -1204,7 +1725,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
             return
         
         # Check if GNOME Shell extensions are enabled
-        if not self.check_gnome_extensions_enabled():
+        if not ExtensionManager.check_gnome_extensions_enabled():
             self.show_extensions_enable_dialog()
             return
         
@@ -1212,12 +1733,12 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         if not self.test_mode and not self.backup_created:
             dialog = Adw.MessageDialog(
                 transient_for=self,
-                heading=_("backup_before_apply"),
-                body=_("backup_before_apply"),
+                heading=self.translator._("backup_before_apply"),
+                body=self.translator._("backup_before_apply"),
             )
             
-            dialog.add_response("skip", _("skip"))
-            dialog.add_response("backup", _("backup"))
+            dialog.add_response("skip", self.translator._("skip"))
+            dialog.add_response("backup", self.translator._("backup"))
             dialog.set_response_appearance("backup", Adw.ResponseAppearance.SUGGESTED)
             
             dialog.connect("response", self.on_backup_dialog_response)
@@ -1228,18 +1749,18 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         self.set_applying_state(True)
         
         # Start applying in a separate thread
-        threading.Thread(target=self.apply_selected_layout, daemon=True).start()
+        self.executor.submit(self.apply_selected_layout)
     
     def on_backup_dialog_response(self, dialog, response):
         """Handle response from backup dialog"""
         if response == "backup":
             # Create backup
-            backup_file = create_backup()
+            backup_file = BackupManager.create_backup()
             if backup_file:
                 self.backup_created = True
-                self.show_toast(_("backup_created"))
+                self.show_toast(self.translator._("backup_created"))
             else:
-                self.show_toast(_("backup_error").format(error=_("unknown")))
+                self.show_toast(self.translator._("backup_error").format(error=self.translator._("unknown")))
         
         # Continue with applying layout
         self.on_apply_layout_clicked(None)
@@ -1262,32 +1783,33 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         """Apply the selected layout in a separate thread"""
         try:
             name, config_file = self.selected_layout_item
-            GLib.idle_add(self.update_status, _("applying").format(layout=name))
+            GLib.idle_add(self.update_status, self.translator._("applying").format(layout=name))
             
             # Find config file path
-            config_path = self.find_config_file(config_file)
+            config_path = SystemUtils.find_file(config_file, [LAYOUTS_DIR])
             if not config_path:
-                GLib.idle_add(self.update_status, _("error_config").format(file=config_file))
+                GLib.idle_add(self.update_status, self.translator._("error_config").format(file=config_file))
                 return
             
             # Apply GNOME layout
             self.apply_gnome_layout(config_path)
             
             # Give desktop time to apply changes
+            import time
             time.sleep(0.5)
             
-            GLib.idle_add(self.update_status, _("success").format(layout=name))
+            GLib.idle_add(self.update_status, self.translator._("success").format(layout=name))
             
             # If in test mode, show dialog to keep or revert changes
             if self.test_mode:
                 self.test_mode = False
                 GLib.idle_add(self.show_test_result_dialog)
         except subprocess.TimeoutExpired:
-            GLib.idle_add(self.update_status, _("error_applying").format(error="Operation timed out"))
+            GLib.idle_add(self.update_status, self.translator._("error_applying").format(error="Operation timed out"))
         except subprocess.CalledProcessError as e:
-            GLib.idle_add(self.update_status, _("error_applying").format(error=str(e)))
+            GLib.idle_add(self.update_status, self.translator._("error_applying").format(error=str(e)))
         except Exception as e:
-            GLib.idle_add(self.update_status, _("error").format(error=str(e)))
+            GLib.idle_add(self.update_status, self.translator._("error").format(error=str(e)))
         finally:
             # Always reset applying state
             GLib.idle_add(self.set_applying_state, False)
@@ -1296,12 +1818,12 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         """Show dialog to keep or revert test changes"""
         dialog = Adw.MessageDialog(
             transient_for=self,
-            heading=_("test_layout_title"),
-            body=_("test_layout_message"),
+            heading=self.translator._("test_layout_title"),
+            body=self.translator._("test_layout_message"),
         )
         
-        dialog.add_response("revert", _("test_layout_revert"))
-        dialog.add_response("keep", _("test_layout_keep"))
+        dialog.add_response("revert", self.translator._("test_layout_revert"))
+        dialog.add_response("keep", self.translator._("test_layout_keep"))
         dialog.set_response_appearance("keep", Adw.ResponseAppearance.SUGGESTED)
         
         dialog.connect("response", self.on_test_result_dialog_response)
@@ -1311,12 +1833,12 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         """Handle response from test result dialog"""
         if response == "revert":
             # Restore from backup
-            backup_file = get_latest_backup()
+            backup_file = BackupManager.get_latest_backup()
             if backup_file:
-                if restore_backup(backup_file):
-                    self.show_toast(_("backup_restore_success"))
+                if BackupManager.restore_backup(backup_file):
+                    self.show_toast(self.translator._("backup_restore_success"))
                 else:
-                    self.show_toast(_("backup_restore_error").format(error=_("unknown")))
+                    self.show_toast(self.translator._("backup_restore_error").format(error=self.translator._("unknown")))
         
         dialog.destroy()
     
@@ -1349,51 +1871,16 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         self.status_bar.set_label(message)
         return False  # Don't call again
     
-    def check_gnome_extensions_enabled(self):
-        """Check if GNOME Shell extensions are enabled"""
-        try:
-            # Check if extensions are disabled
-            result = subprocess.run(
-                ["dconf", "read", "/org/gnome/shell/disable-extensions"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            # If the key is set to 'true', extensions are disabled
-            return result.stdout.strip().lower() != "true"
-        except subprocess.CalledProcessError as e:
-            print(f"Error checking extensions status: {e}")
-            # Assume extensions are enabled if we can't check
-            return True
-        except Exception as e:
-            print(f"Unexpected error checking extensions status: {e}")
-            return True
-    
-    def enable_gnome_extensions(self):
-        """Enable GNOME Shell extensions"""
-        try:
-            subprocess.run(
-                ["dconf", "write", "/org/gnome/shell/disable-extensions", "false"],
-                check=True
-            )
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error enabling extensions: {e}")
-            return False
-        except Exception as e:
-            print(f"Unexpected error enabling extensions: {e}")
-            return False
-    
     def show_extensions_enable_dialog(self):
         """Show dialog to enable GNOME Shell extensions"""
         dialog = Adw.MessageDialog(
             transient_for=self,
-            heading=_("extensions_disabled"),
-            body=_("extensions_enable_prompt"),
+            heading=self.translator._("extensions_disabled"),
+            body=self.translator._("extensions_enable_prompt"),
         )
         
-        dialog.add_response("cancel", _("cancel"))
-        dialog.add_response("enable", _("enable"))
+        dialog.add_response("cancel", self.translator._("cancel"))
+        dialog.add_response("enable", self.translator._("enable"))
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED)
         
         dialog.connect("response", self.on_extensions_enable_dialog_response)
@@ -1402,251 +1889,23 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
     def on_extensions_enable_dialog_response(self, dialog, response):
         """Handle response from extensions enable dialog"""
         if response == "enable":
-            if self.enable_gnome_extensions():
-                self.show_toast(_("extensions_enabled_success"))
+            if ExtensionManager.enable_gnome_extensions():
+                self.show_toast(self.translator._("extensions_enabled_success"))
                 # Now, try to apply the layout again
                 self.on_apply_layout_clicked(None)
             else:
-                self.show_toast(_("extensions_enable_error").format(error=_("unknown")))
+                self.show_toast(self.translator._("extensions_enable_error").format(error=self.translator._("unknown")))
         
         dialog.destroy()
     
-    def create_effects_tab(self):
-        """Create the Effects tab"""
-        # Create main container
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        container.set_margin_start(20)
-        container.set_margin_end(20)
-        container.set_margin_top(20)
-        container.set_margin_bottom(20)
-        
-        # Title
-        title = Gtk.Label()
-        title.set_text(_("effects_tab"))
-        title.add_css_class("title-1")
-        title.set_margin_bottom(20)
-        title.set_halign(Gtk.Align.START)
-        container.append(title)
-        
-        # Description
-        description = Gtk.Label()
-        description.set_text(_("effects_description"))
-        description.add_css_class("body")
-        description.set_margin_bottom(30)
-        description.set_halign(Gtk.Align.START)
-        container.append(description)
-        
-        # Check if running on GNOME
-        if self.desktop_env != 'gnome':
-            # Show message that effects are only available on GNOME
-            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            info_box.set_halign(Gtk.Align.CENTER)
-            info_box.set_valign(Gtk.Align.CENTER)
-            info_box.set_vexpand(True)
-            
-            info_icon = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
-            info_icon.set_pixel_size(64)
-            info_icon.set_margin_bottom(20)
-            info_box.append(info_icon)
-            
-            info_label = Gtk.Label()
-            info_label.set_text(_("gnome_only"))
-            info_label.add_css_class("title-3")
-            info_label.set_wrap(True)
-            info_label.set_max_width_chars(30)
-            info_box.append(info_label)
-            
-            container.append(info_box)
-            return container
-        
-        # Create effects grid
-        effects_grid = Gtk.Grid()
-        effects_grid.set_row_spacing(20)
-        effects_grid.set_column_spacing(20)
-        effects_grid.set_halign(Gtk.Align.CENTER)
-        effects_grid.set_valign(Gtk.Align.CENTER)
-        effects_grid.set_vexpand(True)
-        
-        # Define effects with updated URLs
-        effects = [
-            {
-                "name": _("desktop_cube"),
-                "description": _("desktop_cube_description"),
-                "uuid": "desktop-cube@schneegans.github.com",
-                "url": "https://extensions.gnome.org/extension/4648/desktop-cube/"
-            },
-            {
-                "name": _("magic_lamp"),
-                "description": _("magic_lamp_description"),
-                "uuid": "compiz-alike-magic-lamp-effect@hermes83.github.com",
-                "url": "https://extensions.gnome.org/extension/3740/compiz-alike-magic-lamp-effect/"
-            },
-            {
-                "name": _("windows_effects"),
-                "description": _("windows_effects_description"),
-                "uuid": "compiz-windows-effect@hermes83.github.com",
-                "url": "https://extensions.gnome.org/extension/3210/compiz-windows-effect/"
-            },
-            {
-                "name": _("desktop_icons"),
-                "description": _("desktop_icons_description"),
-                "uuid": "ding@rastersoft.com",
-                "url": "https://extensions.gnome.org/extension/2087/desktop-icons-ng-ding/",
-                "has_settings": True
-            }
-        ]
-        
-        # Create effect cards
-        for i, effect in enumerate(effects):
-            # Effect card
-            effect_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            effect_card.add_css_class("card")
-            effect_card.set_size_request(250, 220)
-            
-            # Effect icon
-            effect_icon = Gtk.Image.new_from_icon_name("applications-graphics-symbolic")
-            effect_icon.set_pixel_size(48)
-            effect_icon.set_margin_top(20)
-            effect_icon.set_halign(Gtk.Align.CENTER)
-            effect_card.append(effect_icon)
-            
-            # Effect name
-            effect_name = Gtk.Label()
-            effect_name.set_text(effect["name"])
-            effect_name.add_css_class("title-3")
-            effect_name.set_margin_top(10)
-            effect_name.set_halign(Gtk.Align.CENTER)
-            effect_card.append(effect_name)
-            
-            # Effect description
-            effect_description = Gtk.Label()
-            effect_description.set_text(effect["description"])
-            effect_description.add_css_class("body")
-            effect_description.set_margin_top(5)
-            effect_description.set_margin_bottom(15)
-            effect_description.set_halign(Gtk.Align.CENTER)
-            effect_description.set_wrap(True)
-            effect_description.set_max_width_chars(20)
-            effect_card.append(effect_description)
-            
-            # Check if extension is installed
-            installed = self.check_extension_installed(effect["uuid"])
-            
-            if installed:
-                # Check if extension is enabled
-                enabled = self.check_extension_enabled(effect["uuid"])
-                
-                # Create toggle switch
-                toggle = Gtk.Switch()
-                toggle.set_active(enabled)
-                toggle.set_halign(Gtk.Align.CENTER)
-                toggle.set_margin_bottom(10)
-                toggle.connect("notify::active", lambda switch, _, uuid=effect["uuid"]: self.toggle_extension(uuid, switch.get_active()))
-                effect_card.append(toggle)
-                
-                # Status label
-                status_label = Gtk.Label()
-                status_label.set_text(_("enable") if not enabled else _("disable"))
-                status_label.add_css_class("body")
-                status_label.set_halign(Gtk.Align.CENTER)
-                status_label.set_margin_bottom(10)
-                effect_card.append(status_label)
-                
-                # Add settings button if extension has settings and is enabled
-                if effect.get("has_settings", False) and enabled:
-                    settings_button = Gtk.Button()
-                    settings_button.set_icon_name("settings-symbolic")
-                    settings_button.set_tooltip_text(_("extension_settings"))
-                    settings_button.set_halign(Gtk.Align.CENTER)
-                    settings_button.set_margin_bottom(10)
-                    settings_button.connect("clicked", lambda btn, uuid=effect["uuid"]: self.open_extension_settings(uuid))
-                    effect_card.append(settings_button)
-            else:
-                # Install button
-                install_button = Gtk.Button(label=_("install_extension"))
-                install_button.add_css_class("pill")
-                install_button.set_margin_bottom(20)
-                install_button.connect("clicked", lambda btn, url=effect["url"]: self.open_url(url))
-                effect_card.append(install_button)
-            
-            # Add to grid
-            effects_grid.attach(effect_card, i % 3, i // 3, 1, 1)
-        
-        container.append(effects_grid)
-        
-        return container
-    
-    def check_extension_installed(self, uuid):
-        """Check if a GNOME extension is installed"""
-        user_extensions = os.path.expanduser("~/.local/share/gnome-shell/extensions")
-        system_extensions = "/usr/share/gnome-shell/extensions"
-        
-        # Check user extensions
-        if os.path.exists(os.path.join(user_extensions, uuid)):
-            return True
-        
-        # Check system extensions
-        if os.path.exists(os.path.join(system_extensions, uuid)):
-            return True
-        
-        return False
-    
-    def check_extension_enabled(self, uuid):
-        """Check if a GNOME extension is enabled"""
-        try:
-            # Get list of enabled extensions
-            result = subprocess.run(
-                ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse the list
-            enabled_extensions = result.stdout.strip().strip("[]").replace("'", "").split(", ")
-            
-            # Check if our extension is in the list
-            return uuid in enabled_extensions
-        except:
-            return False
-    
-    def toggle_extension(self, uuid, enable):
-        """Enable or disable a GNOME extension"""
-        try:
-            # Get current list of enabled extensions
-            result = subprocess.run(
-                ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse the list
-            enabled_extensions = result.stdout.strip().strip("[]").replace("'", "").split(", ")
-            
-            if enable:
-                # Add extension to list if not already there
-                if uuid not in enabled_extensions:
-                    enabled_extensions.append(uuid)
-            else:
-                # Remove extension from list
-                if uuid in enabled_extensions:
-                    enabled_extensions.remove(uuid)
-            
-            # Set the new list
-            new_list = "@as [" + ", ".join([f"'{ext}'" for ext in enabled_extensions if ext]) + "]"
-            subprocess.run(
-                ["gsettings", "set", "org.gnome.shell", "enabled-extensions", new_list],
-                check=True
-            )
-            
-            # Show notification
+    def toggle_extension(self, uuid: str, enable: bool):
+        """Toggle a GNOME extension"""
+        if ExtensionManager.toggle_extension(uuid, enable):
             self.show_toast(f"{uuid} {'enabled' if enable else 'disabled'}")
-            
-        except subprocess.CalledProcessError as e:
-            self.show_toast(f"Error toggling extension: {str(e)}")
+        else:
+            self.show_toast(f"Error toggling extension")
     
-    def open_extension_settings(self, uuid):
+    def open_extension_settings(self, uuid: str):
         """Open the settings for a GNOME extension"""
         try:
             # Try to open the extension settings directly
@@ -1659,233 +1918,31 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
                 # Last resort: open extensions.gnome.org
                 self.open_url(f"https://extensions.gnome.org/extension/{uuid.split('@')[0]}/")
     
-    def open_url(self, url):
+    def open_url(self, url: str):
         """Open a URL in the default browser"""
         subprocess.run(["xdg-open", url], check=True)
     
-    def create_themes_tab(self):
-        """Create the Themes tab"""
-        # Create main container
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        container.set_margin_start(20)
-        container.set_margin_end(20)
-        container.set_margin_top(20)
-        container.set_margin_bottom(20)
-        
-        # Title
-        title = Gtk.Label()
-        title.set_text(_("themes_tab"))
-        title.add_css_class("title-1")
-        title.set_margin_bottom(20)
-        title.set_halign(Gtk.Align.START)
-        container.append(title)
-        
-        # Description
-        description = Gtk.Label()
-        description.set_text(_("themes_description"))
-        description.add_css_class("body")
-        description.set_margin_bottom(30)
-        description.set_halign(Gtk.Align.START)
-        container.append(description)
-        
-        # Create theme categories
-        theme_notebook = Gtk.Notebook()
-        theme_notebook.set_vexpand(True)
-        
-        # GTK Themes
-        gtk_themes_page = self.create_theme_page("gtk")
-        gtk_themes_label = Gtk.Label(label=_("gtk_theme"))
-        theme_notebook.append_page(gtk_themes_page, gtk_themes_label)
-        
-        # Icon Themes
-        icon_themes_page = self.create_theme_page("icons")
-        icon_themes_label = Gtk.Label(label=_("icon_theme"))
-        theme_notebook.append_page(icon_themes_page, icon_themes_label)
-        
-        # Shell Themes
-        shell_themes_page = self.create_theme_page("shell")
-        shell_themes_label = Gtk.Label(label=_("shell_theme"))
-        theme_notebook.append_page(shell_themes_page, shell_themes_label)
-        
-        container.append(theme_notebook)
-        
-        return container
-    
-    def create_theme_page(self, theme_type):
-        """Create a theme page for a specific type"""
-        # Create scrolled window
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled_window.set_vexpand(True)
-        
-        # Create flow box for themes
-        flow_box = Gtk.FlowBox()
-        flow_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        flow_box.set_max_children_per_line(4)
-        flow_box.set_min_children_per_line(2)
-        flow_box.set_halign(Gtk.Align.CENTER)
-        flow_box.set_valign(Gtk.Align.START)
-        flow_box.set_row_spacing(20)
-        flow_box.set_column_spacing(20)
-        
-        # Get themes based on type
-        themes = self.get_themes(theme_type)
-        
-        if not themes:
-            # No themes found message
-            no_themes_label = Gtk.Label()
-            no_themes_label.set_text(_("no_themes_found"))
-            no_themes_label.add_css_class("title-3")
-            no_themes_label.set_margin_top(50)
-            no_themes_label.set_halign(Gtk.Align.CENTER)
-            flow_box.append(no_themes_label)
-        else:
-            # Create theme cards
-            for theme_name, theme_path in themes:
-                theme_card = self.create_theme_card(theme_name, theme_path, theme_type)
-                flow_box.append(theme_card)
-        
-        scrolled_window.set_child(flow_box)
-        return scrolled_window
-    
-    def create_theme_card(self, theme_name, theme_path, theme_type):
-        """Create a theme card"""
-        # Create card container
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        card.add_css_class("card")
-        card.set_size_request(200, 200)
-        card.set_margin_start(10)
-        card.set_margin_end(10)
-        card.set_margin_top(10)
-        card.set_margin_bottom(10)
-        
-        # Extract color from theme name
-        color = extract_color_from_theme_name(theme_name)
-        
-        # Create color circle
-        color_circle = Gtk.DrawingArea()
-        color_circle.set_size_request(80, 80)
-        color_circle.set_halign(Gtk.Align.CENTER)
-        color_circle.set_margin_top(20)
-        color_circle.set_draw_func(self.draw_color_circle, color)
-        card.append(color_circle)
-        
-        # Theme name
-        name_label = Gtk.Label()
-        name_label.set_text(theme_name)
-        name_label.add_css_class("title-4")
-        name_label.set_margin_top(15)
-        name_label.set_halign(Gtk.Align.CENTER)
-        name_label.set_ellipsize(Pango.EllipsizeMode.END)
-        name_label.set_max_width_chars(15)
-        card.append(name_label)
-        
-        # Apply button
-        apply_button = Gtk.Button(label=_("apply_theme"))
-        apply_button.add_css_class("pill")
-        apply_button.set_margin_top(15)
-        apply_button.set_margin_bottom(20)
-        apply_button.set_halign(Gtk.Align.CENTER)
-        apply_button.connect("clicked", lambda btn: self.apply_theme(theme_name, theme_type))
-        card.append(apply_button)
-        
-        return card
-    
-    def draw_color_circle(self, drawing_area, ctx, width, height, color):
-        """Draw a color circle"""
-        # Set background color
-        ctx.set_source_rgb(int(color[1:3], 16)/255, int(color[3:5], 16)/255, int(color[5:7], 16)/255)
-        
-        # Draw circle
-        ctx.arc(width/2, height/2, min(width, height)/2 - 5, 0, 2 * 3.14159)
-        ctx.fill()
-    
-    def get_themes(self, theme_type):
-        """Get available themes of a specific type"""
-        themes = []
-        
-        # Define search paths based on theme type
-        if theme_type == "gtk" or theme_type == "shell":
-            search_paths = [
-                os.path.expanduser("~/.themes"),
-                "/usr/local/share/themes",
-                "/usr/share/themes"
-            ]
-        elif theme_type == "icons":
-            search_paths = [
-                os.path.expanduser("~/.icons"),
-                "/usr/local/share/icons",
-                "/usr/share/icons"
-            ]
-        else:
-            return themes
-        
-        # Check all search paths
-        for search_path in search_paths:
-            if not os.path.exists(search_path):
-                continue
-                
-            # Get all theme directories
-            for theme_dir in os.listdir(search_path):
-                theme_path = os.path.join(search_path, theme_dir)
-                
-                # Skip if not a directory
-                if not os.path.isdir(theme_path):
-                    continue
-                
-                # Check based on theme type
-                if theme_type == "gtk":
-                    # Check for gtk-3.0 or gtk-2.0 directory
-                    if os.path.exists(os.path.join(theme_path, "gtk-3.0")) or \
-                       os.path.exists(os.path.join(theme_path, "gtk-2.0")):
-                        themes.append((theme_dir, theme_path))
-                
-                elif theme_type == "icons":
-                    # Check for index.theme file
-                    if os.path.exists(os.path.join(theme_path, "index.theme")):
-                        themes.append((theme_dir, theme_path))
-                
-                elif theme_type == "shell":
-                    # Check for gnome-shell directory
-                    shell_dir = os.path.join(theme_path, "gnome-shell")
-                    if os.path.exists(shell_dir):
-                        # Check for required files
-                        if (os.path.exists(os.path.join(shell_dir, "gnome-shell.css")) or
-                            os.path.exists(os.path.join(shell_dir, "gnome-shell.gresource"))):
-                            themes.append((theme_dir, theme_path))
-        
-        # Remove duplicates and sort
-        themes = list(set(themes))
-        themes.sort(key=lambda x: x[0].lower())
-        
-        return themes
-    
-    def apply_theme(self, theme_name, theme_type):
+    def apply_theme(self, theme_name: str, theme_type: str):
         """Apply a theme using gsettings"""
-        # Set the selected item and type for compatibility with the provided code
-        self.selected_item = theme_name
-        self.selected_type = theme_type
-        
         # Start applying in a separate thread
-        threading.Thread(target=self._apply_theme_thread, daemon=True).start()
+        self.executor.submit(self._apply_theme_thread, theme_name, theme_type)
     
-    def _apply_theme_thread(self):
+    def _apply_theme_thread(self, theme_name: str, theme_type: str):
         """Apply the selected theme in a separate thread"""
         try:
-            if self.selected_type == "shell":
-                theme_name = self.selected_item
+            if theme_type == "shell":
                 print(f"Applying shell theme: {theme_name}")
-                GLib.idle_add(self.update_status, _("applying_shell").format(theme=theme_name))
+                GLib.idle_add(self.update_status, self.translator._("applying_shell").format(theme=theme_name))
                 
                 # Check if User Themes extension is installed and enabled
                 user_theme_uuid = "user-theme@gnome-shell-extensions.gcampax.github.com"
                 
-                if not self.check_extension_installed(user_theme_uuid):
+                if not ExtensionManager.check_extension_installed(user_theme_uuid):
                     print("User Themes extension is not installed")
                     GLib.idle_add(self.show_user_theme_dialog)
                     return
                 
-                if not self.check_extension_enabled(user_theme_uuid):
+                if not ExtensionManager.check_extension_enabled(user_theme_uuid):
                     print("User Themes extension is not enabled")
                     GLib.idle_add(self.show_user_theme_dialog)
                     return
@@ -1910,20 +1967,19 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
                     print(f"Current shell theme after setting: {current_theme}")
                     
                     if current_theme == theme_name:
-                        GLib.idle_add(self.update_status, _("success_shell").format(theme=theme_name))
-                        GLib.idle_add(self.show_toast, _("shell_theme_restart"))
+                        GLib.idle_add(self.update_status, self.translator._("success_shell").format(theme=theme_name))
+                        GLib.idle_add(self.show_toast, self.translator._("shell_theme_restart"))
                     else:
-                        GLib.idle_add(self.update_status, _("error_shell").format(error=f"Theme not set. Current: {current_theme}"))
+                        GLib.idle_add(self.update_status, self.translator._("error_shell").format(error=f"Theme not set. Current: {current_theme}"))
                 except subprocess.CalledProcessError as e:
                     print(f"Error applying shell theme: {e}")
-                    GLib.idle_add(self.update_status, _("error_shell").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error_shell").format(error=str(e)))
                 except Exception as e:
                     print(f"Unexpected error applying shell theme: {e}")
-                    GLib.idle_add(self.update_status, _("error").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error").format(error=str(e)))
             
-            elif self.selected_type == "gtk":
-                theme_name = self.selected_item
-                GLib.idle_add(self.update_status, _("applying_gtk").format(theme=theme_name))
+            elif theme_type == "gtk":
+                GLib.idle_add(self.update_status, self.translator._("applying_gtk").format(theme=theme_name))
                 
                 # Apply GTK theme using dconf
                 try:
@@ -1944,18 +2000,17 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
                     print(f"Current GTK theme after setting: {current_theme}")
                     
                     if current_theme == theme_name:
-                        GLib.idle_add(self.update_status, _("success_gtk").format(theme=theme_name))
-                        GLib.idle_add(self.show_toast, _("gtk_theme_restart"))
+                        GLib.idle_add(self.update_status, self.translator._("success_gtk").format(theme=theme_name))
+                        GLib.idle_add(self.show_toast, self.translator._("gtk_theme_restart"))
                     else:
-                        GLib.idle_add(self.update_status, _("error_gtk").format(error=f"Theme not set. Current: {current_theme}"))
+                        GLib.idle_add(self.update_status, self.translator._("error_gtk").format(error=f"Theme not set. Current: {current_theme}"))
                 except subprocess.CalledProcessError as e:
-                    GLib.idle_add(self.update_status, _("error_gtk").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error_gtk").format(error=str(e)))
                 except Exception as e:
-                    GLib.idle_add(self.update_status, _("error").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error").format(error=str(e)))
             
-            elif self.selected_type == "icons":
-                theme_name = self.selected_item
-                GLib.idle_add(self.update_status, _("applying_icons").format(theme=theme_name))
+            elif theme_type == "icons":
+                GLib.idle_add(self.update_status, self.translator._("applying_icons").format(theme=theme_name))
                 
                 # Apply icon theme using dconf
                 try:
@@ -1976,28 +2031,28 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
                     print(f"Current icon theme after setting: {current_theme}")
                     
                     if current_theme == theme_name:
-                        GLib.idle_add(self.update_status, _("success_icons").format(theme=theme_name))
-                        GLib.idle_add(self.show_toast, _("icon_theme_restart"))
+                        GLib.idle_add(self.update_status, self.translator._("success_icons").format(theme=theme_name))
+                        GLib.idle_add(self.show_toast, self.translator._("icon_theme_restart"))
                     else:
-                        GLib.idle_add(self.update_status, _("error_icons").format(error=f"Theme not set. Current: {current_theme}"))
+                        GLib.idle_add(self.update_status, self.translator._("error_icons").format(error=f"Theme not set. Current: {current_theme}"))
                 except subprocess.CalledProcessError as e:
-                    GLib.idle_add(self.update_status, _("error_icons").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error_icons").format(error=str(e)))
                 except Exception as e:
-                    GLib.idle_add(self.update_status, _("error").format(error=str(e)))
+                    GLib.idle_add(self.update_status, self.translator._("error").format(error=str(e)))
             
         except Exception as e:
-            GLib.idle_add(self.update_status, _("error").format(error=str(e)))
+            GLib.idle_add(self.update_status, self.translator._("error").format(error=str(e)))
     
     def show_user_theme_dialog(self):
         """Show dialog to install User Themes extension"""
         dialog = Adw.MessageDialog(
             transient_for=self,
-            heading=_("user_theme_required"),
-            body=_("user_theme_required"),
+            heading=self.translator._("user_theme_required"),
+            body=self.translator._("user_theme_required"),
         )
         
-        dialog.add_response("cancel", _("cancel"))
-        dialog.add_response("install", _("install_user_theme"))
+        dialog.add_response("cancel", self.translator._("cancel"))
+        dialog.add_response("install", self.translator._("install_user_theme"))
         dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
         
         dialog.connect("response", self.on_user_theme_dialog_response)
@@ -2015,10 +2070,7 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         """Show a toast notification"""
         toast = Adw.Toast.new(message)
         toast.set_timeout(3)
-        
-        # Get the toast overlay from the main window
-        if hasattr(self, 'toast_overlay'):
-            self.toast_overlay.add_toast(toast)
+        self.toast_overlay.add_toast(toast)
     
     def on_resize(self, widget, param):
         """Handle window resize for responsive adjustments"""
@@ -2031,48 +2083,32 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
             else:
                 self.preview_image.set_size_request(330, 160)
     
-    def find_icon(self, icon_name):
-        """Search for icon in common locations"""
-        if not icon_name:
-            return None
-            
-        possible_paths = [
-            os.path.join(os.path.dirname(__file__), "icons", icon_name),
-            os.path.expanduser(f"~/.local/share/icons/{icon_name}"),
-            f"/usr/share/icons/{icon_name}",
-            f"/usr/local/share/icons/{icon_name}"
-        ]
+    def show_intro_dialog(self):
+        """Show introduction dialog"""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=self.translator._("intro_title"),
+            body=self.translator._("intro_message"),
+        )
         
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
+        dialog.add_response("close", self.translator._("close"))
+        dialog.set_response_appearance("close", Adw.ResponseAppearance.SUGGESTED)
         
-        # Try with different extensions
-        base_name, ext = os.path.splitext(icon_name)
-        for ext in ['.png', '.jpg', '.jpeg', '.svg']:
-            test_path = base_name + ext
-            for path in possible_paths:
-                test_path = os.path.join(os.path.dirname(path), os.path.basename(test_path))
-                if os.path.exists(test_path):
-                    return test_path
+        # Add "Don't show again" checkbox
+        dont_show_check = Gtk.CheckButton(label=self.translator._("intro_dont_show"))
+        dont_show_check.set_margin_top(12)
+        dont_show_check.set_halign(Gtk.Align.CENTER)
+        dialog.set_extra_child(dont_show_check)
         
-        return None
+        dialog.connect("response", self.on_intro_dialog_response, dont_show_check)
+        dialog.present()
     
-    def find_config_file(self, config_file):
-        """Search for config file in common locations"""
-        config_dir = "layouts"  # Changed from "gnome-layouts" to "layouts"
+    def on_intro_dialog_response(self, dialog, response, dont_show_check):
+        """Handle response from intro dialog"""
+        if dont_show_check.get_active():
+            self.settings_manager.set("intro_shown", True)
         
-        possible_paths = [
-            os.path.join(os.path.dirname(__file__), config_dir, config_file),
-            os.path.expanduser(f"~/.config/{config_dir}/{config_file}"),
-            f"/usr/share/{config_dir}/{config_file}"
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
-        
-        return None
+        dialog.destroy()
     
     def load_css(self):
         """Load CSS for styling"""
@@ -2123,8 +2159,10 @@ class BigAppearanceWindow(Adw.ApplicationWindow):
         )
 
 class BigAppearanceApp(Adw.Application):
+    """Main application class"""
+    
     def __init__(self):
-        super().__init__(application_id='org.bigappearance.app')
+        super().__init__(application_id=APP_ID)
         self.connect('activate', self.on_activate)
         
         # Add actions
@@ -2141,6 +2179,7 @@ class BigAppearanceApp(Adw.Application):
         self.add_action(restore_action)
     
     def on_activate(self, app):
+        """Handle application activation"""
         win = BigAppearanceWindow(app)
         win.present()
     
@@ -2197,7 +2236,7 @@ class BigAppearanceApp(Adw.Application):
     def on_restore_backup(self, action, param):
         """Handle restore backup action"""
         active_window = self.get_active_window()
-        backup_file = get_latest_backup()
+        backup_file = BackupManager.get_latest_backup()
         
         if not backup_file:
             active_window.show_toast(_("backup_restore_error").format(error=_("No backup found")))
@@ -2219,12 +2258,66 @@ class BigAppearanceApp(Adw.Application):
     def on_restore_dialog_response(self, dialog, response, backup_file):
         """Handle response from restore dialog"""
         if response == "restore":
-            if restore_backup(backup_file):
+            if BackupManager.restore_backup(backup_file):
                 self.get_active_window().show_toast(_("backup_restore_success"))
             else:
                 self.get_active_window().show_toast(_("backup_restore_error").format(error=_("unknown")))
         
         dialog.destroy()
+
+# Translation function for global use
+def _(text):
+    """Global translation function"""
+    return TRANSLATIONS.get(get_system_language(), TRANSLATIONS["en"]).get(text, text)
+
+def get_system_language():
+    """Get the system language"""
+    try:
+        # Try to get the language from the locale
+        lang = locale.getdefaultlocale()[0]
+        if lang:
+            # Check if we have a translation for the full locale
+            if lang in TRANSLATIONS:
+                return lang
+            # Extract primary language code (e.g., 'pt' from 'pt_BR')
+            primary_lang = lang.split('_')[0]
+            # Check if we have a translation for the primary language
+            if primary_lang in TRANSLATIONS:
+                return primary_lang
+    except:
+        pass
+    
+    # Fallback to checking environment variables
+    try:
+        lang = os.environ.get('LANG', '').split('.')[0]
+        if lang:
+            # Check if we have a translation for the full locale
+            if lang in TRANSLATIONS:
+                return lang
+            # Extract primary language code
+            primary_lang = lang.split('_')[0]
+            # Check if we have a translation for the primary language
+            if primary_lang in TRANSLATIONS:
+                return primary_lang
+    except:
+        pass
+    
+    # Fallback to checking LANGUAGE environment variable
+    try:
+        lang = os.environ.get('LANGUAGE', '').split(':')[0]
+        if lang:
+            # Check if we have a translation for the full locale
+            if lang in TRANSLATIONS:
+                return lang
+            # Extract primary language code
+            primary_lang = lang.split('_')[0]
+            # Check if we have a translation for the primary language
+            if primary_lang in TRANSLATIONS:
+                return primary_lang
+    except:
+        pass
+    
+    return "en"  # Default to English
 
 if __name__ == "__main__":
     app = BigAppearanceApp()
