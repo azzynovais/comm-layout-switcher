@@ -1,2 +1,2 @@
 #!/bin/sh
-python /usr/share/comm-layout-switcher/comm-layout-switcher.py "$@"
+python /usr/share/comm-layout-switcher/main.py "$@"
